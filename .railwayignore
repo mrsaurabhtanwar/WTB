@@ -1,5 +1,10 @@
 node_modules/
 .wwebjs_auth/
+.wwebjs_cache/
+.local/
+.config/
+.cache/
+.nixpacks/
 current-qr.png
 qr-data-url.txt
 .env
@@ -10,7 +15,6 @@ qr-data-url.txt
 Thumbs.db
 *.tmp
 *.temp
-.cache/
 .vscode/
 .idea/
 *.md
