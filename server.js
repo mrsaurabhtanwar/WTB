@@ -18,9 +18,22 @@ const app = express();
 app.use(express.json({ limit: "64kb" }));
 
 const Bottleneck = require("bottleneck");
-// Initialize WhatsApp client
-const whatsappClient = new WhatsAppClient();
-const port = parseInt(process.env.PORT || "5000", 10);
+
+// Initialize WhatsApp client with error handling
+let whatsappClient;
+try {
+  whatsappClient = new WhatsAppClient();
+} catch (error) {
+  console.error("❌ Failed to create WhatsApp client:", error.message);
+  // Create a dummy client to prevent crashes
+  whatsappClient = {
+    isReady: () => false,
+    sendMessage: () => Promise.reject(new Error("WhatsApp client not available")),
+    destroy: () => Promise.resolve()
+  };
+}
+
+const port = parseInt(process.env.PORT || "8080", 10);
 const sendDelay = parseInt(process.env.SEND_DELAY_MS || "600", 10);
 // Bottleneck limiter to throttle sends
 const limiter = new Bottleneck({ minTime: sendDelay, maxConcurrent: 1 });
@@ -90,12 +103,9 @@ app.get("/qr", (req, res) => {
       res.sendFile(path.join(__dirname, "current-qr.png"));
     } else {
       res.status(404).json({
-        error:
-          "QR code not available. Please wait for WhatsApp client to generate one.",
-        whatsappReady:
-          typeof whatsappClient.isReady === "function"
-            ? whatsappClient.isReady()
-            : false,
+        error: "QR code not available yet. Please initialize WhatsApp client first.",
+        whatsappReady: typeof whatsappClient.isReady === "function" ? whatsappClient.isReady() : false,
+        initEndpoint: "/init-whatsapp"
       });
     }
   } catch (error) {
@@ -341,39 +351,56 @@ setInterval(() => {
   }
 }, 120000); // Check every 2 minutes instead of 1
 
-// Graceful shutdown with better logging
+// Graceful shutdown with Railway-specific handling
 process.on("SIGTERM", () => {
+  const isRailway = process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID;
   console.log("🛑 SIGTERM received, shutting down gracefully...");
   console.log("📊 Final memory usage:", Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + "MB");
   console.log("⏱️ Uptime:", Math.round(process.uptime()) + "s");
-  console.log("🔍 Reason: Railway requested shutdown");
+  console.log("🌐 Environment:", isRailway ? "Railway" : "Local");
   
-  // Don't immediately exit - let Railway handle it
-  console.log("⏳ Waiting for Railway to complete shutdown...");
+  if (isRailway) {
+    console.log("🔍 Railway is stopping the container - this may be normal during deployments");
+    console.log("⏳ Allowing Railway to handle shutdown...");
+    // Don't force exit on Railway, let it handle the process
+    return;
+  }
+  
+  // Local development - clean shutdown
+  setTimeout(() => {
+    if (whatsappClient && typeof whatsappClient.destroy === "function") {
+      whatsappClient.destroy().catch(console.error);
+    }
+    process.exit(0);
+  }, 1000);
 });
 
+// Keep SIGINT for manual interruption
 process.on("SIGINT", () => {
   console.log("🛑 SIGINT received, shutting down gracefully...");
-  console.log("📊 Final memory usage:", Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + "MB");
-  
   if (whatsappClient && typeof whatsappClient.destroy === "function") {
     whatsappClient.destroy().catch(console.error);
   }
   process.exit(0);
 });
 
-// Handle uncaught exceptions to prevent crashes
+// Enhanced error handling
 process.on('uncaughtException', (error) => {
-  console.error('❌ Uncaught Exception:', error);
-  // Don't exit on uncaught exceptions in Railway
-  if (!process.env.RAILWAY_ENVIRONMENT) {
+  console.error('❌ Uncaught Exception:', error.message);
+  // Log but don't crash in Railway
+  if (process.env.RAILWAY_ENVIRONMENT) {
+    console.log("⚠️ Continuing despite error (Railway environment)");
+  } else {
     process.exit(1);
   }
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
-  // Don't exit on unhandled rejections in Railway
+  console.error('❌ Unhandled Rejection:', reason);
+  // Log but don't crash in Railway
+  if (process.env.RAILWAY_ENVIRONMENT) {
+    console.log("⚠️ Continuing despite rejection (Railway environment)");
+  }
 });
 
 // Start server - bind to 0.0.0.0 for Railway environment
