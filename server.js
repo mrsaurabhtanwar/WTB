@@ -339,17 +339,27 @@ app.post("/init-whatsapp", async (req, res) => {
   }
 });
 
-// Memory monitoring - reduced frequency for Railway
+// Memory monitoring - Railway optimized
 setInterval(() => {
   const memUsage = process.memoryUsage();
   const memUsageMB = Math.round(memUsage.heapUsed / 1024 / 1024);
-  console.log(`💾 Server Memory: ${memUsageMB}MB`);
-
-  // If memory usage is too high, log warning
-  if (memUsageMB > 450) {
-    console.log("⚠️ High memory usage detected!");
+  
+  // Only log every 5 minutes to reduce noise
+  if (Math.round(process.uptime()) % 300 === 0) {
+    console.log(`💾 Server Memory: ${memUsageMB}MB`);
   }
-}, 120000); // Check every 2 minutes instead of 1
+
+  // Railway free tier memory warning at lower threshold
+  if (memUsageMB > 200) {
+    console.log("⚠️ High memory usage detected! (Railway limit approaching)");
+    
+    // Force garbage collection if available
+    if (global.gc) {
+      global.gc();
+      console.log("🧹 Forced garbage collection");
+    }
+  }
+}, 300000); // Check every 5 minutes instead of 2
 
 // Graceful shutdown with Railway-specific handling
 process.on("SIGTERM", () => {

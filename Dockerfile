@@ -10,8 +10,8 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install only production dependencies
-RUN npm ci --only=production --no-optional
+# Install only production dependencies, skip optional packages
+RUN npm ci --only=production --no-optional --ignore-scripts
 
 # Copy application code
 COPY . .
@@ -19,6 +19,7 @@ COPY . .
 # Set environment variables
 ENV NODE_ENV=production
 ENV PORT=8080
+ENV NPM_CONFIG_UPDATE_NOTIFIER=false
 
 # Expose port
 EXPOSE 8080
