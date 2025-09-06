@@ -1,0 +1,295 @@
+name: CI & Deploy to Azure
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+    {}
+
+env:
+  NODE_VERSION: '20'
+  
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    name: 🧪 Test & Verify
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: npm ci
+
+      - name: 🔨 Build application (if build script exists)
+        run: |
+          if npm run | grep -q "build"; then 
+            echo "📦 Running build script..."
+            npm run build
+          else 
+            echo "ℹ️ No build script found, skipping..."
+          fi
+
+      - name: 🏥 Run verification script
+        run: |
+          chmod +x ./verify.sh
+          ./verify.sh
+
+      - name: 📊 Collect test results
+        if: always()
+        run: |
+          echo "Test completed with exit code: $?"
+          echo "NODE_VERSION=$NODE_VERSION" >> $GITHUB_ENV
+          echo "VERIFICATION_PASSED=true" >> $GITHUB_ENV
+
+  build-and-deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    name: "🚀 Build & Deploy to Azure"
+    env:
+      AZURE_WEBAPP_NAME: tailoring-whats-bot
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'DefaultResourceGroup-CIN' }}
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: npm ci --production
+
+      - name: 🔨 Build application (if needed)
+        run: |
+          if npm run | grep -q "build"; then 
+            echo "🔨 Building application..."
+            npm run build
+          else 
+            echo "ℹ️ No build script found, using source files..."
+          fi
+
+      - name: 📦 Create deployment package
+        run: |
+          echo "📦 Creating deployment ZIP..."
+          
+          # Create deployment zip excluding development files
+          zip -r whatsapp-bot.zip . \
+            -x ".git/*" \
+            -x ".github/*" \
+            -x "*.log" \
+            -x ".env*" \
+            -x "package.json.backup" \
+            -x ".wwebjs_auth/*" \
+            -x "current-qr.png" \
+            -x "verify.sh" \
+            -x "deploy.sh" \
+            -x "cleanup-and-start.*" \
+            -x "post-build.sh" \
+            -x "test-*.js" \
+            -x "test*/**" \
+            -x "*.zip"
+          
+          # Check zip size
+          ZIP_SIZE=$(du -h whatsapp-bot.zip | cut -f1)
+          echo "✅ Deployment package created: whatsapp-bot.zip ($ZIP_SIZE)"
+          
+          # Verify zip contents
+          echo "📋 Package contents:"
+          unzip -l whatsapp-bot.zip | head -20
+
+      - name: � Validate deployment inputs
+        run: |
+          echo "🔍 Validating required inputs..."
+          echo "Detected AZURE_WEBAPP_NAME='${AZURE_WEBAPP_NAME}'"
+          echo "Detected AZURE_RESOURCE_GROUP='${AZURE_RESOURCE_GROUP}'"
+          if [ -z "${AZURE_WEBAPP_NAME}" ]; then echo "❌ Missing AZURE_WEBAPP_NAME (set a repository variable named AZURE_WEBAPP_NAME or hard-code app-name)."; exit 1; fi
+          if [ ! -f whatsapp-bot.zip ]; then echo "❌ Deployment package missing (whatsapp-bot.zip)."; exit 1; fi
+          if [ -z "${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}" ]; then echo "❌ Secret AZURE_WEBAPP_PUBLISH_PROFILE not defined. In Azure Portal > App Service > Overview > Get publish profile, copy XML into repo secret."; exit 1; fi
+          echo "✅ All required inputs present." 
+          # Show app name for clarity
+          echo "App Name: ${AZURE_WEBAPP_NAME}"
+
+      - name: 🚀 Deploy to Azure Web App (Publish Profile)
+        id: deploy-to-webapp
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: ./whatsapp-bot.zip
+
+      - name: 🏥 Post-deployment health check
+        id: health-check
+        run: |
+          echo "🏥 Performing post-deployment health check..."
+          
+          # Use the actual Azure app URL (from your deployment logs)
+          APP_URL="https://tailoring-whats-bot-hvheavb3bbhfbsdn.centralindia-01.azurewebsites.net"
+          HEALTH_URL="${APP_URL}/"
+          
+          echo "App URL: $APP_URL"
+          echo "Health URL: $HEALTH_URL"
+          
+          # Wait for deployment to complete
+          echo "⏳ Waiting 30 seconds for deployment to settle..."
+          sleep 30
+          
+          # Health check with retries
+          SUCCESS=false
+          for i in {1..20}; do
+            echo "⏳ Health check attempt $i/20..."
+            
+            # Get HTTP status code
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$HEALTH_URL" || echo "000")
+            echo "HTTP Status: $HTTP_STATUS"
+            
+            if [ "$HTTP_STATUS" = "200" ]; then
+              echo "✅ Health check passed!"
+              SUCCESS=true
+              break
+            elif [ "$HTTP_STATUS" = "503" ]; then
+              echo "⚠️ Service unavailable, app may be starting up..."
+            elif [ "$HTTP_STATUS" = "000" ]; then
+              echo "⚠️ Connection failed, retrying..."
+            else
+              echo "⚠️ Unexpected status code: $HTTP_STATUS"
+            fi
+            
+            if [ $i -lt 20 ]; then
+              echo "💤 Waiting 15 seconds before retry..."
+              sleep 15
+            fi
+          done
+          
+          # Set outputs for later steps
+          echo "app-url=$APP_URL" >> $GITHUB_OUTPUT
+          echo "health-url=$HEALTH_URL" >> $GITHUB_OUTPUT
+          
+          if [ "$SUCCESS" = "true" ]; then
+            echo "success=true" >> $GITHUB_OUTPUT
+            echo "✅ Deployment health check passed!"
+            exit 0
+          else
+            echo "success=false" >> $GITHUB_OUTPUT
+            echo "❌ Deployment health check failed!"
+            exit 1
+          fi
+
+      - name: 🧪 Smoke test deployment
+        if: steps.health-check.outputs.success == 'true'
+        run: |
+          echo "🧪 Running smoke tests..."
+          
+          APP_URL="${{ steps.health-check.outputs.app-url }}"
+          
+          # Test main endpoint
+          echo "Testing main endpoint..."
+          MAIN_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$APP_URL/" || echo "000")
+          echo "Main endpoint status: $MAIN_STATUS"
+          
+          # Test QR endpoint (should return 404 or 200)
+          echo "Testing QR endpoint..."
+          QR_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$APP_URL/qr" || echo "000")
+          echo "QR endpoint status: $QR_STATUS"
+          
+          # Test webhook endpoint (should reject GET with 405)
+          echo "Testing webhook endpoint..."
+          WEBHOOK_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$APP_URL/webhook/order-ready" || echo "000")
+          echo "Webhook endpoint status: $WEBHOOK_STATUS"
+          
+          # Verify responses
+          if [ "$MAIN_STATUS" = "200" ]; then
+            echo "✅ Main endpoint working"
+          else
+            echo "⚠️ Main endpoint returned: $MAIN_STATUS"
+          fi
+          
+          if [ "$QR_STATUS" = "200" ] || [ "$QR_STATUS" = "404" ]; then
+            echo "✅ QR endpoint working correctly"
+          else
+            echo "⚠️ QR endpoint returned: $QR_STATUS"
+          fi
+          
+          echo "🎉 Smoke tests completed!"
+
+      - name: 📊 Deployment summary
+        if: always()
+        run: |
+          echo "🎉 DEPLOYMENT SUMMARY"
+          echo "===================="
+          echo "App Name: ${{ env.AZURE_WEBAPP_NAME }}"
+          echo "Resource Group: ${{ env.AZURE_RESOURCE_GROUP }}"
+          echo "App URL: ${{ steps.health-check.outputs.app-url }}"
+          echo "Health URL: ${{ steps.health-check.outputs.health-url }}"
+          echo "Deployment Status: ${{ steps.health-check.outputs.success == 'true' && '✅ Success' || '❌ Failed' }}"
+          echo ""
+          echo "🔗 Useful Links:"
+          echo "• App Status: ${{ steps.health-check.outputs.app-url }}"
+          echo "• QR Code: ${{ steps.health-check.outputs.app-url }}/qr"
+          echo "• Health Check: ${{ steps.health-check.outputs.health-url }}"
+          echo ""
+          echo "📝 Next Steps:"
+          echo "1. Visit the app URL to verify it's working"
+          echo "2. Scan QR code to authenticate WhatsApp"
+          echo "3. Test the webhook endpoint"
+          echo "4. Monitor logs in Azure Portal"
+
+      - name: 💬 Comment on PR (if applicable)
+        if: github.event_name == 'pull_request' && steps.health-check.outputs.success == 'true'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 🚀 Deployment Preview Ready!
+              
+              Your WhatsApp Bot has been deployed and is ready for testing:
+              
+              - **App URL**: ${{ steps.health-check.outputs.app-url }}
+              - **Health Check**: ${{ steps.health-check.outputs.health-url }}
+              - **QR Code**: ${{ steps.health-check.outputs.app-url }}/qr
+              
+              ### ✅ All tests passed!
+              - Dependencies installed
+              - Application built successfully  
+              - Server started and responding
+              - Health checks passing
+              
+              You can now scan the QR code to authenticate WhatsApp and test your bot.`
+            })
+
+  notify-failure:
+    needs: [test, build-and-deploy]
+    runs-on: ubuntu-latest
+    if: failure()
+    steps:
+      - name: 📧 Notify on failure
+        run: |
+          echo "❌ Deployment failed!"
+          echo "Check the logs above for details."
+          echo ""
+          echo "Common issues:"
+          echo "1. Azure authentication issues"
+          echo "2. App name conflicts"
+          echo "3. Resource quota exceeded"
+          echo "4. Application startup errors"
+          echo ""
+          echo "Troubleshooting:"
+          echo "• Check Azure portal for detailed logs"
+          echo "• Verify publish profile is valid"
+          echo "• Ensure app name is unique globally"

@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+
+# Environment variables
+.env
+.env.local
+
+# WhatsApp session data (regenerated on first run)
+.wwebjs_auth/
+.wwebjs_cache/
+
+# Temporary files
+current-qr.png
+qr-data-url.txt
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Replit
+.replit_history
