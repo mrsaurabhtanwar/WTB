@@ -27,8 +27,16 @@ RUN npm ci --only=production
 # Copy application code
 COPY . .
 
-# Expose port
-EXPOSE 5000
+# Create user for running app (security best practice)
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S appuser -u 1001
+
+# Change ownership of app directory
+RUN chown -R appuser:nodejs /app
+USER appuser
+
+# Expose port (Railway will set PORT env var)
+EXPOSE $PORT
 
 # Start the application
 CMD ["npm", "start"]

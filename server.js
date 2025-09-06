@@ -349,15 +349,21 @@ process.on("SIGINT", () => {
   process.exit(0);
 });
 
-// Start server - bind to 0.0.0.0 for Replit environment
+// Start server - bind to 0.0.0.0 for Railway environment
 app.listen(port, '0.0.0.0', () => {
+  const isRailway = process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID;
+  const baseUrl = isRailway 
+    ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN || 'wtb-production.up.railway.app'}` 
+    : `http://localhost:${port}`;
+    
   console.log(`🚀 Server running on 0.0.0.0:${port}`);
+  console.log(`🌐 Environment: ${isRailway ? 'Railway' : 'Local'}`);
   console.log(
     `📱 WhatsApp Bot Status: ${whatsappClient.isReady() ? "Ready" : "Not Ready"}`,
   );
-  console.log(`🔗 Health check: http://localhost:${port}/`);
-  console.log(`📷 QR Code: http://localhost:${port}/qr`);
-  console.log(`📨 Webhook: http://localhost:${port}/webhook/order-ready`);
+  console.log(`🔗 Health check: ${baseUrl}/`);
+  console.log(`📷 QR Code: ${baseUrl}/qr`);
+  console.log(`📨 Webhook: ${baseUrl}/webhook/order-ready`);
   console.log(
     `💾 Initial Memory: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`,
   );
