@@ -9,7 +9,8 @@ RUN apk add --no-cache \
     freetype-dev \
     harfbuzz \
     ca-certificates \
-    ttf-freefont
+    ttf-freefont \
+    dumb-init
 
 # Set Puppeteer to use installed Chromium
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
@@ -37,6 +38,9 @@ USER appuser
 
 # Expose port (Railway will set PORT env var)
 EXPOSE $PORT
+
+# Use dumb-init to handle signals properly
+ENTRYPOINT ["dumb-init", "--"]
 
 # Start the application
 CMD ["npm", "start"]

@@ -61,10 +61,16 @@ app.get("/healthz", (req, res) => {
 app.get("/health", (req, res) => {
   // During startup, just check if the server is responding
   // WhatsApp client can be authenticated later via QR code
+  const memUsage = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+  const uptime = Math.round(process.uptime());
+  
   res.status(200).json({ 
     ok: true, 
     serverRunning: true,
     whatsappReady: typeof whatsappClient.isReady === "function" ? whatsappClient.isReady() : false,
+    memory: memUsage + "MB",
+    uptime: uptime + "s",
+    environment: process.env.RAILWAY_ENVIRONMENT ? "Railway" : "Local",
     message: "Server is running. Scan QR code to authenticate WhatsApp if needed."
   });
 });
@@ -332,21 +338,44 @@ setInterval(() => {
   }
 }, 120000); // Check every 2 minutes instead of 1
 
-// Graceful shutdown
+// Graceful shutdown with better logging
 process.on("SIGTERM", () => {
   console.log("🛑 SIGTERM received, shutting down gracefully...");
-  if (whatsappClient && typeof whatsappClient.destroy === "function") {
-    whatsappClient.destroy();
-  }
-  process.exit(0);
+  console.log("📊 Final memory usage:", Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + "MB");
+  
+  // Give Railway some time to finish processing
+  setTimeout(() => {
+    if (whatsappClient && typeof whatsappClient.destroy === "function") {
+      whatsappClient.destroy().catch(console.error);
+    }
+    process.exit(0);
+  }, 1000);
 });
 
 process.on("SIGINT", () => {
   console.log("🛑 SIGINT received, shutting down gracefully...");
-  if (whatsappClient && typeof whatsappClient.destroy === "function") {
-    whatsappClient.destroy();
+  console.log("📊 Final memory usage:", Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + "MB");
+  
+  setTimeout(() => {
+    if (whatsappClient && typeof whatsappClient.destroy === "function") {
+      whatsappClient.destroy().catch(console.error);
+    }
+    process.exit(0);
+  }, 1000);
+});
+
+// Handle uncaught exceptions to prevent crashes
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error);
+  // Don't exit on uncaught exceptions in Railway
+  if (!process.env.RAILWAY_ENVIRONMENT) {
+    process.exit(1);
   }
-  process.exit(0);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+  // Don't exit on unhandled rejections in Railway
 });
 
 // Start server - bind to 0.0.0.0 for Railway environment
