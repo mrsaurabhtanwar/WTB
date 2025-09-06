@@ -20,3 +20,4 @@ README.md
 RAILWAY_DEPLOYMENT_GUIDE.md
 *.md
 !package*.json
+nixpacks.toml
