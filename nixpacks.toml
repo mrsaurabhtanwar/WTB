@@ -1,5 +1,5 @@
 [phases.setup]
-nixPkgs = ["nodejs", "npm", "chromium", "nss", "freetype", "harfbuzz", "ttf-freefont"]
+nixPkgs = ["nodejs", "chromium"]
 
 [phases.build]
 cmds = ["npm ci --only=production"]
