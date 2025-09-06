@@ -57,14 +57,16 @@ app.get("/healthz", (req, res) => {
   return res.status(503).json({ ok: false });
 });
 
-// Alternative health endpoint for compatibility
+// Alternative health endpoint for compatibility - relaxed for Railway
 app.get("/health", (req, res) => {
-  const ok =
-    typeof whatsappClient.isReady === "function"
-      ? whatsappClient.isReady()
-      : false;
-  if (ok) return res.status(200).json({ ok: true });
-  return res.status(503).json({ ok: false });
+  // During startup, just check if the server is responding
+  // WhatsApp client can be authenticated later via QR code
+  res.status(200).json({ 
+    ok: true, 
+    serverRunning: true,
+    whatsappReady: typeof whatsappClient.isReady === "function" ? whatsappClient.isReady() : false,
+    message: "Server is running. Scan QR code to authenticate WhatsApp if needed."
+  });
 });
 
 // QR scanner page
