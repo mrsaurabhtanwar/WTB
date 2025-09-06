@@ -29,17 +29,20 @@ let sendChain = Promise.resolve();
 
 // Health check endpoint
 app.get("/", (req, res) => {
+  const memUsage = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+  const uptime = Math.round(process.uptime());
+  
   res.json({
     status: "Tailoring Shop Bot Running",
     timestamp: new Date().toISOString(),
-    whatsappReady:
-      typeof whatsappClient.isReady === "function"
-        ? whatsappClient.isReady()
-        : false,
+    whatsappReady: typeof whatsappClient.isReady === "function" ? whatsappClient.isReady() : false,
     qrCodeAvailable: fs.existsSync("current-qr.png"),
+    memory: memUsage + "MB",
+    uptime: uptime + "s",
+    environment: process.env.RAILWAY_ENVIRONMENT ? "Railway" : "Local",
     endpoints: {
-      "GET /healthz": "Strict health check",
-      "GET /": "Health check",
+      "GET /health": "Alternative health check",
+      "GET /": "Main health check",
       "GET /scanner": "QR scanner page for WhatsApp authentication",
       "GET /qr": "Get QR code image for WhatsApp authentication",
       "POST /webhook/order-ready": "Send WhatsApp notifications",
@@ -342,26 +345,21 @@ setInterval(() => {
 process.on("SIGTERM", () => {
   console.log("🛑 SIGTERM received, shutting down gracefully...");
   console.log("📊 Final memory usage:", Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + "MB");
+  console.log("⏱️ Uptime:", Math.round(process.uptime()) + "s");
+  console.log("🔍 Reason: Railway requested shutdown");
   
-  // Give Railway some time to finish processing
-  setTimeout(() => {
-    if (whatsappClient && typeof whatsappClient.destroy === "function") {
-      whatsappClient.destroy().catch(console.error);
-    }
-    process.exit(0);
-  }, 1000);
+  // Don't immediately exit - let Railway handle it
+  console.log("⏳ Waiting for Railway to complete shutdown...");
 });
 
 process.on("SIGINT", () => {
   console.log("🛑 SIGINT received, shutting down gracefully...");
   console.log("📊 Final memory usage:", Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + "MB");
   
-  setTimeout(() => {
-    if (whatsappClient && typeof whatsappClient.destroy === "function") {
-      whatsappClient.destroy().catch(console.error);
-    }
-    process.exit(0);
-  }, 1000);
+  if (whatsappClient && typeof whatsappClient.destroy === "function") {
+    whatsappClient.destroy().catch(console.error);
+  }
+  process.exit(0);
 });
 
 // Handle uncaught exceptions to prevent crashes
