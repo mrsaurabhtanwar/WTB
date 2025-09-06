@@ -16,17 +16,23 @@ class WhatsAppClient {
         this._qrDataUrlPath = path.join(__dirname, 'qr-data-url.txt');
         this._sessionDir = path.join(__dirname, '.wwebjs_auth');
         this._retryCount = 0;
-        this._maxRetries = 5;
+        this._maxRetries = 3; // Reduced retries for Railway
         this._isRailway = process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID;
+        this._isInitializing = false;
 
         // Ensure session directory exists
         try { fs.mkdirSync(this._sessionDir, { recursive: true }); } catch {}
 
         console.log(`🌐 Environment: ${this._isRailway ? 'Railway' : 'Local'} | Platform: ${process.platform}`);
         
-        this._createClient();
-        this._wireEvents();
-        this._initialize();
+        // Only initialize if not in Railway environment during startup
+        if (!this._isRailway) {
+            this._createClient();
+            this._wireEvents();
+            this._initialize();
+        } else {
+            console.log('🚀 Railway detected: WhatsApp client will initialize on first use');
+        }
     }
 
     _createClient() {
@@ -262,12 +268,21 @@ class WhatsAppClient {
     }
 
     async _initialize() {
+        if (this._isInitializing) return;
+        this._isInitializing = true;
+        
         try {
             console.log('🚀 Initializing WhatsApp client...');
-            await this.client.initialize();
+            if (this.client) {
+                await this.client.initialize();
+            }
         } catch (err) {
             console.error('❌ Failed to initialize WhatsApp client:', err.message);
-            this._handleFailure();
+            if (!this._isRailway) {
+                this._handleFailure();
+            }
+        } finally {
+            this._isInitializing = false;
         }
     }
 
@@ -289,8 +304,20 @@ class WhatsAppClient {
     }
 
     async sendMessage(chatId, message) {
+        if (!this.client) {
+            // Lazy initialize for Railway
+            if (this._isRailway && !this._isInitializing) {
+                console.log('🔄 Lazy initializing WhatsApp client for Railway...');
+                this._createClient();
+                this._wireEvents();
+                await this._initialize();
+                // Wait a bit for initialization
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+        }
+        
         if (!this.isReady()) {
-            throw new Error('WhatsApp client not ready');
+            throw new Error('WhatsApp client not ready. Please scan QR code first.');
         }
         return this.client.sendMessage(chatId, message);
     }
@@ -311,12 +338,26 @@ class WhatsAppClient {
     async destroy() {
         try {
             if (this.client) {
-                this.client.removeListener('qr', this._onQr);
-                this.client.removeListener('ready', this._onReady);
-                this.client.removeListener('authenticated', this._onAuthenticated);
-                this.client.removeListener('auth_failure', this._onAuthFailure);
-                this.client.removeListener('disconnected', this._onDisconnected);
-                await this.client.destroy();
+                // Remove event listeners safely
+                try {
+                    this.client.removeListener('qr', this._onQr);
+                    this.client.removeListener('ready', this._onReady);
+                    this.client.removeListener('authenticated', this._onAuthenticated);
+                    this.client.removeListener('auth_failure', this._onAuthFailure);
+                    this.client.removeListener('disconnected', this._onDisconnected);
+                } catch (e) {
+                    console.warn('⚠️ Error removing event listeners:', e.message);
+                }
+                
+                // Destroy client safely
+                try {
+                    await Promise.race([
+                        this.client.destroy(),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('Destroy timeout')), 5000))
+                    ]);
+                } catch (e) {
+                    console.warn('⚠️ Error during client destroy:', e.message);
+                }
             }
             
             // Cleanup temporary user data directory if it exists
@@ -334,6 +375,7 @@ class WhatsAppClient {
             this.client = null;
             this._ready = false;
             this._userDataDir = null;
+            this._isInitializing = false;
         }
     }
 }

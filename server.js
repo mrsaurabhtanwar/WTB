@@ -298,7 +298,29 @@ app.use((error, req, res, next) => {
   });
 });
 
-// Memory monitoring
+// Add endpoint to manually initialize WhatsApp client
+app.post("/init-whatsapp", async (req, res) => {
+  try {
+    if (!whatsappClient.client) {
+      console.log('🔄 Manually initializing WhatsApp client...');
+      whatsappClient._createClient();
+      whatsappClient._wireEvents();
+      await whatsappClient._initialize();
+    }
+    res.json({
+      success: true,
+      message: "WhatsApp client initialization started",
+      ready: whatsappClient.isReady()
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Memory monitoring - reduced frequency for Railway
 setInterval(() => {
   const memUsage = process.memoryUsage();
   const memUsageMB = Math.round(memUsage.heapUsed / 1024 / 1024);
@@ -308,7 +330,7 @@ setInterval(() => {
   if (memUsageMB > 450) {
     console.log("⚠️ High memory usage detected!");
   }
-}, 60000); // Check every minute
+}, 120000); // Check every 2 minutes instead of 1
 
 // Graceful shutdown
 process.on("SIGTERM", () => {
