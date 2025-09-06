@@ -1,0 +1,16 @@
+node_modules/
+.git/
+.env*
+*.log
+.DS_Store
+Thumbs.db
+.nixpacks/
+.local/
+.cache/
+.npm/
+.wwebjs_auth/session*/
+temp/
+tmp/
+*.tmp
+current-qr.png
+qr-data-url.txt
